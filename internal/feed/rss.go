@@ -2,8 +2,10 @@ package feed
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html"
+	"log"
 	"log/slog"
 	"net/url"
 	"regexp"
@@ -49,6 +51,7 @@ type RSSFeedRequest struct {
 	HideCategories  bool   `yaml:"hide-categories"`
 	HideDescription bool   `yaml:"hide-description"`
 	ItemLinkPrefix  string `yaml:"item-link-prefix"`
+	RetryTimes      int    `yaml:"retry-times"`
 }
 
 type RSSFeedItems []RSSFeedItem
@@ -67,12 +70,27 @@ func getItemsFromRSSFeedTask(request RSSFeedRequest) ([]RSSFeedItem, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
 
-	feed, err := feedParser.ParseURLWithContext(request.Url, ctx)
+	// retry if error
+	var feed *gofeed.Feed
+	for attempts := 0; attempts <= request.RetryTimes; attempts++ {
+		var err error
+		feed, err = feedParser.ParseURLWithContext(request.Url, ctx)
 
-	if err != nil {
-		return nil, err
+		if err != nil {
+			log.Printf("request failed: %v. retrying %d ...\n", err, attempts)
+			if attempts < request.RetryTimes {
+				time.Sleep(100 * time.Microsecond)
+				continue
+			} else {
+				return nil, err
+			}
+		}
+		break
 	}
 
+	if feed == nil {
+		return nil, errors.New("feedParser.ParseURLWithContext(request.Url, ctx) return nil")
+	}
 	items := make(RSSFeedItems, 0, len(feed.Items))
 
 	for i := range feed.Items {
